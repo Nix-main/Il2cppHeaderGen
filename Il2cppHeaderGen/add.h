@@ -1,4 +1,9 @@
-﻿template <typename T>
+﻿template <typename T> struct ReferenceList_c;
+template <typename T> struct ReferenceList_StaticFields;
+template <typename T> struct ValueList_c;
+template <typename T> struct ValueList_StaticFields;
+
+template <typename T>
 struct ReferenceArray {
     Il2CppObject obj;
     Il2CppArrayBounds *bounds;

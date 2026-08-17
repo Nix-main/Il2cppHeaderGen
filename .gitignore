@@ -2,3 +2,6 @@
 *.DotSettings.user
 bin/
 obj/
+/Il2cppHeaderGen/res/
+/Il2cppHeaderGen/out/
+/Il2cppHeaderGen/out/

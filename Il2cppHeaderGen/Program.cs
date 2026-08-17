@@ -3,13 +3,24 @@ using System.Text;
 using System.Text.RegularExpressions;
 using TreeSitter;
 
+var dataRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../.."));
+var inputPath = Path.Combine(dataRoot, "res", "il2cpp.h");
+var outputPath = Path.Combine(dataRoot, "out", "il2cpp.h");
+
+if (!File.Exists(inputPath))
+{
+    Console.Error.WriteLine($"input header not found: {inputPath}");
+    return 1;
+}
+
 using var language = new Language("C++");
 using var parser = new Parser(language);
-var source = File.ReadAllText(@"D:\Among Us Exefs Modding\il2cpp.h");
-using var tree = parser.Parse(source)!;
+var il2CppHeaderData = File.ReadAllText(inputPath);
+using var tree = parser.Parse(il2CppHeaderData)!;
 
 var structsByName = new Dictionary<string, Node>();
 IndexTypes(tree.RootNode);
+
 void IndexTypes(Node node)
 {
     if (node.Type is "struct_specifier" or "class_specifier")
@@ -24,9 +35,16 @@ void IndexTypes(Node node)
         IndexTypes(child);
 }
 
-Node? GetBody(Node node) => node.NamedChildren.FirstOrDefault(c => c.Type == "field_declaration_list");
+Node? GetBody(Node node)
+{
+    return node.NamedChildren.FirstOrDefault(c => c.Type == "field_declaration_list");
+}
 
-Node? GetTypeNode(Node field) => field.NamedChildren.FirstOrDefault(c => c.Type is "type_identifier" or "primitive_type" or "struct_specifier");
+Node? GetTypeNode(Node field)
+{
+    return field.NamedChildren.FirstOrDefault(c =>
+        c.Type is "type_identifier" or "primitive_type" or "struct_specifier");
+}
 
 Node? FindIdentifier(Node node)
 {
@@ -34,54 +52,99 @@ Node? FindIdentifier(Node node)
     return node.NamedChildren.Select(FindIdentifier).FirstOrDefault(n => n is not null);
 }
 
-string ReplaceArray(string type) 
+const string listPrefix = "System_Collections_Generic_List_";
+const string dictPrefix = "System_Collections_Generic_Dictionary_";
+
+string[] nestedDictTypes = ["Entry", "Enumerator", "KeyCollection", "ValueCollection"];
+
+var primitiveAliases = new Dictionary<string, string>
 {
-    if (type.Contains("_array"))
-    {
-        try {
-            string a = type.Split(" ")[1].Split("_array")[0];
-            var body = GetBody(structsByName[a + "_o"]);
-            if (body is null) return "";
-            bool useRef = body.NamedChildren.Any(c => FindIdentifier(c)!.Text == "klass");
-            return useRef ? $"ReferenceArray<{a}>" : $"ValueArray<{a}>";
-        } catch (IndexOutOfRangeException) { }
-    }
+    ["bool"] = "System_Boolean", ["byte"] = "System_Byte", ["sbyte"] = "System_SByte",
+    ["char"] = "System_Char", ["short"] = "System_Int16", ["ushort"] = "System_UInt16",
+    ["int"] = "System_Int32", ["uint"] = "System_UInt32", ["long"] = "System_Int64",
+    ["ulong"] = "System_UInt64", ["float"] = "System_Single", ["double"] = "System_Double",
+    ["decimal"] = "System_Decimal", ["string"] = "System_String", ["object"] = "System_Object"
+};
+
+string CanonicalTypeName(string arg)
+{
+    return primitiveAliases.GetValueOrDefault(arg, arg);
+}
+
+var unresolvedTypes = new HashSet<string>();
+
+Node? StructBodyByName(string name)
+{
+    return structsByName.TryGetValue(name, out var s) ? GetBody(s) : null;
+}
+
+bool HasKlass(Node body)
+{
+    return body.NamedChildren.Any(c => FindIdentifier(c)?.Text == "klass");
+}
+
+string FlagUnresolvedType(string type)
+{
+    if (unresolvedTypes.Add(type)) Console.WriteLine($"could not resolve {type}");
     return type;
 }
 
-string ReplaceList(string type) 
+string SubstitutedType(string type)
 {
-    if (type.Contains("System_Collections_Generic_List"))
+    var name = type.StartsWith("struct ") ? type["struct ".Length..] : type;
+
+    if (name.StartsWith(dictPrefix) && name.EndsWith("__o"))
     {
-        try {
-            string a = type.Split(" ")[1].Split("System_Collections_Generic_List_")[1].Replace("__", "_");
-            var body = GetBody(structsByName[a]);
-            if (body is null) return "";
-            bool useRef = body.NamedChildren.Any(c => FindIdentifier(c)!.Text == "klass");
-            return useRef ? $"ReferenceList<{a}>" : $"ValueList<{a}>";
-        } catch (IndexOutOfRangeException) { }
+        var args = name[dictPrefix.Length..^"__o".Length];
+        if (nestedDictTypes.Any(n => args.StartsWith(n + "_") && !args.StartsWith(n + "__")))
+            return type;
+
+        var parts = args.Split("__");
+        if (parts.Length != 2) return FlagUnresolvedType(type);
+
+        string key = CanonicalTypeName(parts[0]), value = CanonicalTypeName(parts[1]);
+        if (StructBodyByName(key + "_o") is null || StructBodyByName(value + "_o") is null)
+            return FlagUnresolvedType(type);
+        return $"Dictionary<{key}, {value}>";
     }
+
+    if (name.StartsWith(listPrefix) && name.EndsWith("__o"))
+    {
+        var elem = CanonicalTypeName(name[listPrefix.Length..^"__o".Length]);
+        if (StructBodyByName(elem + "_o") is not { } body) return FlagUnresolvedType(type);
+        return $"{(HasKlass(body) ? "Reference" : "Value")}List<{elem}>";
+    }
+
+    if (name.EndsWith("_array"))
+    {
+        var elem = CanonicalTypeName(name[..^"_array".Length]);
+        if (StructBodyByName(elem + "_o") is not { } body) return FlagUnresolvedType(type);
+        return $"{(HasKlass(body) ? "Reference" : "Value")}Array<{elem}>";
+    }
+
     return type;
 }
 
-string ReplaceDictionary(string type) 
+void AppendFields(StringBuilder target, Node body, bool skipVoid)
 {
-    if (type.Contains("System_Collections_Generic_Dictionary"))
+    foreach (var field in body.NamedChildren.Where(c => c.Type == "field_declaration"))
     {
-        try
-        {
-            string a = type.Split(" ")[1].Split("System_Collections_Generic_Dictionary_")[1].Replace("__", "_");
-            var body = GetBody(structsByName[a]);
-            if (body is null) return "";
-            return $"Dictionary<{a}>";
-        } catch (IndexOutOfRangeException) { }
+        var id = FindIdentifier(field);
+        var declaredType = field.NamedChildren.FirstOrDefault(c =>
+            c.Type is "type_identifier" or "primitive_type" or "struct_specifier");
+        if (id is null || declaredType is null) continue;
+
+        var type = SubstitutedType(declaredType.Text);
+        if (skipVoid && type == "void") continue;
+
+        var isPointer = field.Text.Replace(declaredType.Text, "").Replace(id.Text, "").Contains('*');
+        target.Append($"\t{type.Replace("_o", "")}{(isPointer ? "*" : "")} {id.Text};\n");
     }
-    return type;
 }
 
-var rex = new Regex("^(?!\\d+$).+");    
+var rex = new Regex("^(?!\\d+$).+");
 
-string MergeStructs(string a)
+string MergedStruct(string a)
 {
     var builder = new StringBuilder();
     var body = GetBody(structsByName[a + "_o"]);
@@ -93,17 +156,19 @@ string MergeStructs(string a)
 
     var fields = GetBody(structsByName[a + "_Fields"]);
     if (fields is null) return "";
-    string extra = structsByName[a + "_Fields"].Text.Contains(":") ? structsByName[a + "_Fields"].Text.Split(":")[1].Split("\n")[0].Trim() : "";
-    extra = extra.Replace("_Fields", "");
-    extra = extra.Split("_")[extra.Split("_").Length - 1].Trim();
-    if (!string.IsNullOrEmpty(extra))
-        extra = $" : {extra}";
-    string f = a.Split("_")[a.Split("_").Length - 1];
+    var declaration = structsByName[a + "_Fields"].Text;
+    var bodyStart = declaration.IndexOf('{');
+    var head = bodyStart < 0 ? declaration : declaration[..bodyStart];
+
+    var extra = "";
+    if (head.IndexOf(':') is var colon && colon >= 0)
+        extra = $" : {head[(colon + 1)..].Trim().Replace("_Fields", "").Split('_')[^1]}";
+    var f = a.Split('_')[^1];
     if (!rex.IsMatch(f))
         return "";
 
     var hasStatics = structsByName.ContainsKey(f + "_StaticFields");
-    StringBuilder statics = new StringBuilder();
+    var statics = new StringBuilder();
     if (hasStatics)
     {
         statics.Append($"struct {f}_c {{\n");
@@ -114,47 +179,15 @@ string MergeStructs(string a)
         var body3 = GetBody(structsByName[f + "_StaticFields"]);
         if (body3 is null) return "";
 
-        foreach (var field in body3.NamedChildren.Where(c => c.Type == "field_declaration"))
-        {
-            var id = FindIdentifier(field);
-            string typeNode = GetTypeNode(field)!.Text;
-            try
-            {
-                typeNode = ReplaceDictionary(ReplaceList(ReplaceArray(GetTypeNode(field)!.Text)));
-            }
-            catch (KeyNotFoundException e)
-            {
-                Console.WriteLine($"Encountered error while merging {id!.Text} in {a}, likely due to type {typeNode}: {e.Message} at line {e.StackTrace!.Split('\n')[1].Split(':')[2]}");
-            }
-
-            if (typeNode == "void") continue;
-
-            var isPointer = field.Text.Replace(typeNode, "").Replace(id!.Text, "").Contains('*');
-            statics.Append($"\t{typeNode.Replace("_o", "")}{(isPointer ? "*" : "")} {id.Text};\n");
-        }
+        AppendFields(statics, body3, true);
         statics.Append("};\n\n");
     }
 
-    extra = !extra.EndsWith("{") ? extra + " {" : extra;
-    string b = hasStatics ? f + "_c" : "void*";
-    builder.Append($"struct {f}{extra}\n");
+    var b = hasStatics ? f + "_c" : "void*";
+    builder.Append($"struct {f}{extra} {{\n");
     builder.Append($"\t{b} klass;\n");
     builder.Append("\tvoid* monitor;\n");
-    foreach (var field in fields.NamedChildren.Where(c => c.Type == "field_declaration"))
-    {
-        var id = FindIdentifier(field);
-        string typeNode = GetTypeNode(field)!.Text;
-        try
-        {
-            typeNode = ReplaceDictionary(ReplaceList(ReplaceArray(GetTypeNode(field)!.Text)));
-        }
-        catch (KeyNotFoundException e)
-        {
-            Console.WriteLine($"Encountered error while merging {id!.Text} in {a}, likely due to type {typeNode}: {e.Message} at line {e.StackTrace!.Split('\n')[1].Split(':')[2]}");
-        }
-        var isPointer = field.Text.Replace(typeNode, "").Replace(id!.Text, "").Contains('*');
-        builder.Append($"\t{typeNode.Replace("_o", "")}{(isPointer ? "*" : "")} {id.Text};\n");
-    }
+    AppendFields(builder, fields, false);
 
     builder.Append("};\n\n");
     builder.Append(statics);
@@ -173,18 +206,30 @@ string[] strip =
     "Android"
 ];
 
-StringBuilder header = new StringBuilder();
+var header = new StringBuilder();
 foreach (var key in structsByName.Keys)
 {
-    string v = new string(key.SkipLast(2).ToArray());
+    var v = new string(key.SkipLast(2).ToArray());
     if (!key.EndsWith("_o") || strip.Any(s => v.StartsWith(s) || v.EndsWith(s)))
         continue;
-    header.Append(MergeStructs(v));
+    header.Append(MergedStruct(v));
 }
 
 await using var st = Assembly.GetExecutingAssembly().GetManifestResourceStream("Il2cppHeaderGen.add.h");
 using var reader = new StreamReader(st!);
-string content = await reader.ReadToEndAsync();
+var content = await reader.ReadToEndAsync();
 header.Append(content);
 
-File.WriteAllText("il2cpp.h", header.ToString());
+Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+File.WriteAllText(outputPath, header.ToString());
+
+// all types we want to generate .h/.sym files for
+List<string> types =
+[
+    "PlayerControl"
+];
+
+var scriptJson = Path.Combine(dataRoot, "res", "script.json");
+if (File.Exists(scriptJson)) await SymbolExport.Run(scriptJson, Path.GetDirectoryName(outputPath)!, types);
+
+return 0;

@@ -9,8 +9,14 @@
     </PropertyGroup>
     
     <ItemGroup>
+        <Compile Remove="res\**" />
+        <None Remove="res\**" />
         <EmbeddedResource Include="add.h" />
         <PackageReference Include="TreeSitter.DotNet" Version="1.3.0" />
+    </ItemGroup>
+    
+    <ItemGroup>
+      <Folder Include="out\" />
     </ItemGroup>
 
 </Project>
