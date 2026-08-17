@@ -40,12 +40,6 @@ Node? GetBody(Node node)
     return node.NamedChildren.FirstOrDefault(c => c.Type == "field_declaration_list");
 }
 
-Node? GetTypeNode(Node field)
-{
-    return field.NamedChildren.FirstOrDefault(c =>
-        c.Type is "type_identifier" or "primitive_type" or "struct_specifier");
-}
-
 Node? FindIdentifier(Node node)
 {
     if (node.Type is "field_identifier") return node;
