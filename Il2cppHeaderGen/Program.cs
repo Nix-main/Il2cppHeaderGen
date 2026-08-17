@@ -158,27 +158,28 @@ public class Program {
         var extra = "";
         if (head.IndexOf(':') is var colon && colon >= 0)
             extra = $" : {head[(colon + 1)..].Trim().Replace("_Fields", "").Split('_')[^1]}";
-        if (!rex.IsMatch(a))
+        var f = a.Split('_')[^1];
+        if (!rex.IsMatch(f))
             return "";
 
-        var hasStatics = structsByName.ContainsKey(a + "_StaticFields");
+        var hasStatics = structsByName.ContainsKey(f + "_StaticFields");
         var statics = new StringBuilder();
         if (hasStatics)
         {
-            statics.Append($"struct {a}_c {{\n");
+            statics.Append($"struct {f}_c {{\n");
             statics.Append("\tchar pad[184];\n");
-            statics.Append($"\tstruct {a}_StaticFields* static_fields;\n");
+            statics.Append($"\tstruct {f}_StaticFields* static_fields;\n");
             statics.Append("};\n\n");
-            statics.Append($"struct {a}_StaticFields {{\n");
-            var body3 = GetBody(structsByName[a + "_StaticFields"]);
+            statics.Append($"struct {f}_StaticFields {{\n");
+            var body3 = GetBody(structsByName[f + "_StaticFields"]);
             if (body3 is null) return "";
 
             AppendFields(statics, body3, true);
             statics.Append("};\n\n");
         }
 
-        var b = hasStatics ? a + "_c" : "void*";
-        builder.Append($"struct {a}{extra} {{\n");
+        var b = hasStatics ? f + "_c" : "void*";
+        builder.Append($"struct {f}{extra} {{\n");
         builder.Append($"\t{b} klass;\n");
         builder.Append("\tvoid* monitor;\n");
         AppendFields(builder, fields, false);

@@ -1,6 +1,8 @@
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Il2cppHeaderGen;
 
 internal record ScriptMethod(long Address, string Name, string Signature);
 
@@ -118,13 +120,23 @@ internal static class SymbolExport
         var builder = new StringBuilder();
         builder.Append("#pragma once\n\n");
         foreach (var referenced in referencedTypes)
-            builder.Append($"struct {referenced};\n");
+            if (!string.IsNullOrEmpty(referenced.Split("_")[^1]))
+                builder.Append($"struct {referenced.Split("_")[^1]};\n");
 
-        builder.Append($"\nstruct {type.Replace(".", "_")} {{\n");
+        builder.Append($"\nstruct {type.Split(".")[^1]} {{\n");
         foreach (var method in methods)
         {
-            var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Type.Replace("_o", "")} {p.Name}"));
-            builder.Append($"\t{(method.IsStatic ? "static " : "")}{method.ReturnType.Replace("_o", "")} {method.Name}({parameters});\n");
+            var parameters = string.Join(", ", method.Parameters.Select(p =>
+            {
+                string h = p.Type.Replace("_o", "");
+                bool c = Program.primitiveAliases.Any(a => p.Type.Contains(a.Key));
+                h = c ? h : h.Split("_")[^1];
+                return $"{h} {p.Name}";
+            }));
+            bool c = Program.primitiveAliases.Any(a => method.ReturnType.Contains(a.Key));
+            string v = method.ReturnType.Replace("_o", "");
+            v = c ? v : v.Split("_")[^1];
+            builder.Append($"\t{(method.IsStatic ? "static " : "")}{v} {method.Name}({parameters});\n");
         }
 
         return builder.Append("};\n").ToString();
