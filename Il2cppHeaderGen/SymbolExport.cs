@@ -120,7 +120,7 @@ internal static class SymbolExport
         foreach (var referenced in referencedTypes)
             builder.Append($"struct {referenced};\n");
 
-        builder.Append($"\nstruct {type} {{\n");
+        builder.Append($"\nstruct {type.Replace(".", "_")} {{\n");
         foreach (var method in methods)
         {
             var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Type.Replace("_o", "")} {p.Name}"));
