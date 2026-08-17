@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -120,22 +119,36 @@ internal static class SymbolExport
         var builder = new StringBuilder();
         builder.Append("#pragma once\n\n");
         foreach (var referenced in referencedTypes)
-            if (!string.IsNullOrEmpty(referenced.Split("_")[^1]))
-                builder.Append($"struct {referenced.Split("_")[^1]};\n");
+        {
+            if (!Program.TrySubstitutedType(referenced, out var c))
+            {
+                c = c.Split("_")[^1];
+            }
+            if (!string.IsNullOrEmpty(c))
+                builder.Append($"struct {c};\n");
+        }
 
         builder.Append($"\nstruct {type.Split(".")[^1]} {{\n");
         foreach (var method in methods)
         {
             var parameters = string.Join(", ", method.Parameters.Select(p =>
             {
-                string h = p.Type.Replace("_o", "");
+                bool n = Program.TrySubstitutedType(p.Type, out var h);
                 bool c = Program.primitiveAliases.Any(a => p.Type.Contains(a.Key));
-                h = c ? h : h.Split("_")[^1];
+                h = h.Replace("_o", "");
+                if (h.Contains("array"))
+                {
+                    Console.WriteLine(p.Type);
+                    Console.WriteLine(h);
+                }
+
+                h = c || n ? h : h.Split("_")[^1];
                 return $"{h} {p.Name}";
             }));
             bool c = Program.primitiveAliases.Any(a => method.ReturnType.Contains(a.Key));
-            string v = method.ReturnType.Replace("_o", "");
-            v = c ? v : v.Split("_")[^1];
+            var n = Program.TrySubstitutedType(method.ReturnType, out var v);
+            v = v.Replace("_o", "");
+            v = c || n ? v : v.Split("_")[^1];
             builder.Append($"\t{(method.IsStatic ? "static " : "")}{v} {method.Name}({parameters});\n");
         }
 
@@ -164,9 +177,13 @@ internal static class SymbolExport
         var substitutions = new List<string> { type };
         var builder = new StringBuilder($"_ZN{type.Length}{type}{method.Name.Length}{method.Name}E");
         if (method.Parameters.Count == 0) return builder.Append('v').ToString();
-        
+
         foreach (var (parameterType, _) in method.Parameters)
-            builder.Append(MangledType(parameterType.Replace("_o", ""), substitutions));
+        {
+            Program.TrySubstitutedType(parameterType, out var c);
+            builder.Append(MangledType(c.Replace("_o", ""), substitutions));
+        }
+
         return builder.ToString();
     }
 

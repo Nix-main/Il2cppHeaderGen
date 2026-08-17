@@ -84,40 +84,81 @@ public class Program {
         return type;
     }
 
-    public static string SubstitutedType(string type)
+    public static bool TrySubstitutedType(string type, out string val)
     {
         var name = type.StartsWith("struct ") ? type["struct ".Length..] : type;
-
+        bool pointer = false;
+        if (name.EndsWith("*"))
+        {
+            name = name[..^1];
+            pointer = true; 
+        }
         if (name.StartsWith(dictPrefix) && name.EndsWith("__o"))
         {
             var args = name[dictPrefix.Length..^"__o".Length];
             if (nestedDictTypes.Any(n => args.StartsWith(n + "_") && !args.StartsWith(n + "__")))
-                return type;
+            {
+                val = type;
+                return false;
+            }
 
             var parts = args.Split("__");
-            if (parts.Length != 2) return FlagUnresolvedType(type);
+            if (parts.Length != 2)
+            {
+                val = FlagUnresolvedType(type);
+                return false;
+            }
 
             string key = CanonicalTypeName(parts[0]), value = CanonicalTypeName(parts[1]);
             if (StructBodyByName(key + "_o") is null || StructBodyByName(value + "_o") is null)
-                return FlagUnresolvedType(type);
-            return $"Dictionary<{key}, {value}>";
+            {
+                val = FlagUnresolvedType(type);
+                return false;
+            }
+
+            val = $"Dictionary<{key.Split("_")[^1]}, {value.Split("_")[^1]}>{(pointer ? "*" : "")}";
+            return true;
         }
 
         if (name.StartsWith(listPrefix) && name.EndsWith("__o"))
         {
             var elem = CanonicalTypeName(name[listPrefix.Length..^"__o".Length]);
-            if (StructBodyByName(elem + "_o") is not { } body) return FlagUnresolvedType(type);
-            return $"{(HasKlass(body) ? "Reference" : "Value")}List<{elem}>";
+            if (StructBodyByName(elem + "_o") is not { } body)
+            {
+                val = FlagUnresolvedType(type);
+                return false;
+            }
+
+            val = $"{(HasKlass(body) ? "Reference" : "Value")}List<{elem.Split("_")[^1]}>{(pointer ? "*" : "")}";
+            return true;
         }
 
+        if (name.EndsWith("_array_array"))
+        {
+            var elem = CanonicalTypeName(name[..^"_array_array".Length]);
+            if (StructBodyByName(elem + "_o") is not { } body)
+            {
+                val = FlagUnresolvedType(type);
+                return false;
+            }
+            val = $"ValueArray<{(HasKlass(body) ? "Reference" : "Value")}Array<{elem.Split("_")[^1]}>>{(pointer ? "*" : "")}";
+            return true;
+        }
+        
         if (name.EndsWith("_array"))
         {
             var elem = CanonicalTypeName(name[..^"_array".Length]);
-            if (StructBodyByName(elem + "_o") is not { } body) return FlagUnresolvedType(type);
-            return $"{(HasKlass(body) ? "Reference" : "Value")}Array<{elem}>";
+            if (StructBodyByName(elem + "_o") is not { } body)
+            {
+                val = FlagUnresolvedType(type);
+                return false;
+            }
+            val = $"{(HasKlass(body) ? "Reference" : "Value")}Array<{elem.Split("_")[^1]}>{(pointer ? "*" : "")}";
+            return true;
         }
 
-        return type;
+        val = type;
+        return false;
     }
 
     public static void AppendFields(StringBuilder target, Node body, bool skipVoid)
@@ -129,7 +170,7 @@ public class Program {
                 c.Type is "type_identifier" or "primitive_type" or "struct_specifier");
             if (id is null || declaredType is null) continue;
 
-            var type = SubstitutedType(declaredType.Text);
+            TrySubstitutedType(declaredType.Text, out var type);
             if (skipVoid && type == "void") continue;
 
             var isPointer = field.Text.Replace(declaredType.Text, "").Replace(id.Text, "").Contains('*');
