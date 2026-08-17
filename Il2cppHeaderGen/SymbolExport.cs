@@ -116,14 +116,15 @@ internal static class SymbolExport
             .Order(StringComparer.Ordinal);
 
         var builder = new StringBuilder();
+        builder.Append("#pragma once\n\n");
         foreach (var referenced in referencedTypes)
             builder.Append($"struct {referenced};\n");
 
         builder.Append($"\nstruct {type} {{\n");
         foreach (var method in methods)
         {
-            var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"));
-            builder.Append($"  {(method.IsStatic ? "static " : "")}{method.ReturnType} {method.Name}({parameters});\n");
+            var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Type.Replace("_o", "")} {p.Name}"));
+            builder.Append($"\t{(method.IsStatic ? "static " : "")}{method.ReturnType.Replace("_o", "")} {method.Name}({parameters});\n");
         }
 
         return builder.Append("};\n").ToString();
@@ -151,9 +152,9 @@ internal static class SymbolExport
         var substitutions = new List<string> { type };
         var builder = new StringBuilder($"_ZN{type.Length}{type}{method.Name.Length}{method.Name}E");
         if (method.Parameters.Count == 0) return builder.Append('v').ToString();
-
+        
         foreach (var (parameterType, _) in method.Parameters)
-            builder.Append(MangledType(parameterType, substitutions));
+            builder.Append(MangledType(parameterType.Replace("_o", ""), substitutions));
         return builder.ToString();
     }
 
@@ -198,6 +199,7 @@ internal static class SymbolExport
     {
         var bare = type.TrimEnd('*').Trim();
         if (bare.StartsWith("const ")) bare = bare[6..].TrimStart();
+        bare = bare.Replace("_o", "");
         return BuiltinTypes.ContainsKey(bare) || !IsValidIdentifier(bare) ? null : bare;
     }
 
