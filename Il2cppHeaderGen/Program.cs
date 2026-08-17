@@ -34,7 +34,7 @@ Node? FindIdentifier(Node node)
     return node.NamedChildren.Select(FindIdentifier).FirstOrDefault(n => n is not null);
 }
 
-String ReplaceArray(string type) 
+string ReplaceArray(string type) 
 {
     if (type.Contains("_array"))
     {
@@ -49,7 +49,7 @@ String ReplaceArray(string type)
     return type;
 }
 
-String ReplaceList(string type) 
+string ReplaceList(string type) 
 {
     if (type.Contains("System_Collections_Generic_List"))
     {
@@ -64,7 +64,7 @@ String ReplaceList(string type)
     return type;
 }
 
-String ReplaceDictionary(string type) 
+string ReplaceDictionary(string type) 
 {
     if (type.Contains("System_Collections_Generic_Dictionary"))
     {
@@ -161,7 +161,7 @@ string MergeStructs(string a)
 }
 
 string[] strip =
-{
+[
     "System_Collections_Generic_List_",
     "System_Collections_Generic_Dictionary_",
     "MethodInfo",
@@ -170,7 +170,7 @@ string[] strip =
     "Ps4",
     "Ps5",
     "Android"
-};
+];
 
 StringBuilder header = new StringBuilder();
 foreach (var key in structsByName.Keys)
@@ -181,7 +181,7 @@ foreach (var key in structsByName.Keys)
     header.Append(MergeStructs(v));
 }
 
-using var st = Assembly.GetExecutingAssembly().GetManifestResourceStream("Il2cppHeaderGen.add.h");
+await using var st = Assembly.GetExecutingAssembly().GetManifestResourceStream("Il2cppHeaderGen.add.h");
 using var reader = new StreamReader(st!);
 string content = await reader.ReadToEndAsync();
 header.Append(content);
