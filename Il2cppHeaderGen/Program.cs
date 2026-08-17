@@ -69,7 +69,17 @@ var unresolvedTypes = new HashSet<string>();
 
 Node? StructBodyByName(string name)
 {
-    return structsByName.TryGetValue(name, out var s) ? GetBody(s) : null;
+    if (structsByName.TryGetValue(name, out var s))
+    {
+        return GetBody(s);
+    }
+    foreach (var key in structsByName.Keys)
+    {
+        if (key.EndsWith(name))
+            return GetBody(structsByName[key]);
+    }
+
+    return null;
 }
 
 bool HasKlass(Node body)
@@ -220,7 +230,7 @@ File.WriteAllText(outputPath, header.ToString());
 // all types we want to generate .h/.sym files for
 List<string> types =
 [
-    "PlayerControl"
+    "HeroController"
 ];
 
 var scriptJson = Path.Combine(dataRoot, "res", "script.json");
