@@ -95,7 +95,7 @@ string MergeStructs(string a)
     if (fields is null) return "";
     string extra = structsByName[a + "_Fields"].Text.Contains(":") ? structsByName[a + "_Fields"].Text.Split(":")[1].Split("\n")[0].Trim() : "";
     extra = extra.Replace("_Fields", "");
-    extra = extra.Split("_")[extra.Split("_").Length - 1];
+    extra = extra.Split("_")[extra.Split("_").Length - 1].Trim();
     if (!string.IsNullOrEmpty(extra))
         extra = $" : {extra}";
     string f = a.Split("_")[a.Split("_").Length - 1];
@@ -135,6 +135,7 @@ string MergeStructs(string a)
         statics.Append("};\n\n");
     }
 
+    extra = !extra.EndsWith("{") ? extra + " {" : extra;
     string b = hasStatics ? f + "_c" : "void*";
     builder.Append($"struct {f}{extra}\n");
     builder.Append($"\t{b} klass;\n");
