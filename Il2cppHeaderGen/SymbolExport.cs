@@ -105,50 +105,120 @@ internal static class SymbolExport
 
         return new Method(name, NormalizedType(head[..returnTypeEnd]), parameters, isStatic, scriptMethod.Address);
     }
+    
+    private static bool Append(string input, HashSet<string> extras)
+    {
+        if (input.Contains("ReferenceArray"))
+        {
+            extras.Add("template <typename T> struct ReferenceArray");
+            return true;
+        }
+        if (input.Contains("ValueArray"))
+        {
+            extras.Add("template <typename T> struct ValueArray");
+            return true;
+        }
+        if (input.Contains("ValueList"))
+        {
+            extras.Add("template <typename T> struct ValueList");
+            return true;
+        }
+        if (input.Contains("ReferenceList"))
+        {
+            extras.Add("template <typename T> struct ReferenceList");
+            return true;
+        }
+        if (input.Contains("Dictionary"))
+        {
+            extras.Add("template <typename T> struct Dictionary");
+            return true;
+        }
+
+        return false;
+    }
 
     private static string HeaderFileContent(string type, List<Method> methods)
     {
         var referencedTypes = methods
             .SelectMany(m => m.Parameters.Select(p => p.Type).Append(m.ReturnType))
-            .Select(BareTypeName)
-            .OfType<string>()
             .Where(t => t != type)
             .Distinct()
             .Order(StringComparer.Ordinal);
 
         var builder = new StringBuilder();
         builder.Append("#pragma once\n\n");
+        var extras = new HashSet<string>();
         foreach (var referenced in referencedTypes)
         {
-            if (!Program.TrySubstitutedType(referenced, out var c))
+            if (!Program.TrySubstitutedType(referenced, out var c, out var y))
             {
+                c = BareTypeName(c);
+                if (c is null) continue;
                 c = c.Split("_")[^1];
+                extras.Add(c);
             }
-            if (!string.IsNullOrEmpty(c))
-                builder.Append($"struct {c};\n");
+            else
+            {
+                foreach (var n in y.Split(", "))
+                {
+                    extras.Add(n);
+                }
+            }
+            Append(c, extras);
+        }
+
+        var fields = Program.GetFields(Program.GetBody(Program.structsByName2[type.Replace(".", "_")]), false);
+        var enumerable = fields as string[] ?? fields.ToArray();
+        foreach (var field in enumerable)
+        {
+            var t = field.Trim().Split(" ")[0];
+            bool c = BuiltinTypes.Any(a => t.Contains(a.Key));
+            if (c)
+                continue;
+            if (t.EndsWith("*"))
+                t = t[..^1];
+            t = t.EndsWith("_c") ? t : t.Split("_")[^1];
+            Append(t, extras);
+            extras.Add(t);
+        }
+
+        extras.Remove(type);
+        extras.Remove("void");
+        foreach (var extra in extras)
+        {
+            if (!string.IsNullOrEmpty(extra))
+                builder.Append($"{(extra.Contains("struct") ? extra : "struct " + extra)};\n");
         }
 
         builder.Append($"\nstruct {type.Split(".")[^1]} {{\n");
+        foreach (var field in enumerable)
+        {
+            var t = field.Trim().Split(" ")[0];
+            bool c = BuiltinTypes.Any(a => t.Contains(a.Key));
+            bool p = false;
+            if (t.EndsWith("*"))
+            {
+                p = true;
+                t = t[..^1];
+            }
+
+            t = t.EndsWith("_c") || c || string.IsNullOrEmpty(t.Split("_")[^1]) ? t : t.Split("_")[^1];
+            builder.Append($"\t{t}{(p ? "*" : "")} {field.Trim().Split(" ")[1]}\n");
+        }
         foreach (var method in methods)
         {
             var parameters = string.Join(", ", method.Parameters.Select(p =>
             {
                 bool n = Program.TrySubstitutedType(p.Type, out var h);
-                bool c = Program.primitiveAliases.Any(a => p.Type.Contains(a.Key));
+                bool c = BuiltinTypes.Any(a => p.Type.Contains(a.Key));
                 h = h.Replace("_o", "");
-                if (h.Contains("array"))
-                {
-                    Console.WriteLine(p.Type);
-                    Console.WriteLine(h);
-                }
-
-                h = c || n ? h : h.Split("_")[^1];
+                h = c || n || string.IsNullOrEmpty(h.Split("_")[^1]) ? h : h.Split("_")[^1];
                 return $"{h} {p.Name}";
             }));
-            bool c = Program.primitiveAliases.Any(a => method.ReturnType.Contains(a.Key));
+            bool c = BuiltinTypes.Any(a => method.ReturnType.Contains(a.Key));
             var n = Program.TrySubstitutedType(method.ReturnType, out var v);
             v = v.Replace("_o", "");
-            v = c || n ? v : v.Split("_")[^1];
+            v = c || n || string.IsNullOrEmpty(v.Split("_")[^1]) ? v : v.Split("_")[^1];
             builder.Append($"\t{(method.IsStatic ? "static " : "")}{v} {method.Name}({parameters});\n");
         }
 

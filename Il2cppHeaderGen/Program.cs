@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using System.Collections;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using TreeSitter;
@@ -12,7 +13,7 @@ public class Program {
     public static string outputPath = Path.Combine(dataRoot, "out", "il2cpp.h");
 
     public static Dictionary<string, Node> structsByName = new();
-    public static void IndexTypes(Node node)
+    public static void IndexTypes(Node node, Dictionary<string, Node> structsByName)
     {
         if (node.Type is "struct_specifier" or "class_specifier")
         {
@@ -23,10 +24,10 @@ public class Program {
         }
 
         foreach (var child in node.NamedChildren)
-            IndexTypes(child);
+            IndexTypes(child, structsByName);
     }
 
-    public static Node? GetBody(Node node)
+    public static Node? GetBody(Node? node)
     {
         return node.NamedChildren.FirstOrDefault(c => c.Type == "field_declaration_list");
     }
@@ -86,6 +87,11 @@ public class Program {
 
     public static bool TrySubstitutedType(string type, out string val)
     {
+        return TrySubstitutedType(type, out val, out _);
+    }
+
+    public static bool TrySubstitutedType(string type, out string val, out string e)
+    {
         var name = type.StartsWith("struct ") ? type["struct ".Length..] : type;
         bool pointer = false;
         if (name.EndsWith("*"))
@@ -99,6 +105,7 @@ public class Program {
             if (nestedDictTypes.Any(n => args.StartsWith(n + "_") && !args.StartsWith(n + "__")))
             {
                 val = type;
+                e = string.Empty;
                 return false;
             }
 
@@ -106,6 +113,7 @@ public class Program {
             if (parts.Length != 2)
             {
                 val = FlagUnresolvedType(type);
+                e = string.Empty;
                 return false;
             }
 
@@ -113,10 +121,12 @@ public class Program {
             if (StructBodyByName(key + "_o") is null || StructBodyByName(value + "_o") is null)
             {
                 val = FlagUnresolvedType(type);
+                e = string.Empty;
                 return false;
             }
 
-            val = $"Dictionary<{key.Split("_")[^1]}, {value.Split("_")[^1]}>{(pointer ? "*" : "")}";
+            e = $"{key.Split("_")[^1]}, {value.Split("_")[^1]}";
+            val = $"Dictionary<{e}>{(pointer ? "*" : "")}";
             return true;
         }
 
@@ -126,10 +136,11 @@ public class Program {
             if (StructBodyByName(elem + "_o") is not { } body)
             {
                 val = FlagUnresolvedType(type);
+                e = string.Empty;
                 return false;
             }
-
-            val = $"{(HasKlass(body) ? "Reference" : "Value")}List<{elem.Split("_")[^1]}>{(pointer ? "*" : "")}";
+            e = elem.Split("_")[^1];
+            val = $"{(HasKlass(body) ? "Reference" : "Value")}List<{e}>{(pointer ? "*" : "")}";
             return true;
         }
 
@@ -139,9 +150,11 @@ public class Program {
             if (StructBodyByName(elem + "_o") is not { } body)
             {
                 val = FlagUnresolvedType(type);
+                e = string.Empty;
                 return false;
             }
-            val = $"ValueArray<{(HasKlass(body) ? "Reference" : "Value")}Array<{elem.Split("_")[^1]}>>{(pointer ? "*" : "")}";
+            e = elem.Split("_")[^1];
+            val = $"ValueArray<{(HasKlass(body) ? "Reference" : "Value")}Array<{e}>>{(pointer ? "*" : "")}";
             return true;
         }
         
@@ -151,18 +164,30 @@ public class Program {
             if (StructBodyByName(elem + "_o") is not { } body)
             {
                 val = FlagUnresolvedType(type);
+                e = string.Empty;
                 return false;
             }
-            val = $"{(HasKlass(body) ? "Reference" : "Value")}Array<{elem.Split("_")[^1]}>{(pointer ? "*" : "")}";
+            e = elem.Split("_")[^1];
+            val = $"{(HasKlass(body) ? "Reference" : "Value")}Array<{e}>{(pointer ? "*" : "")}";
             return true;
         }
 
         val = type;
+        e = string.Empty;
         return false;
     }
 
-    public static void AppendFields(StringBuilder target, Node body, bool skipVoid)
+    public static void AppendFields(StringBuilder target, Node? body, bool skipVoid)
     {
+        foreach (var str in GetFields(body, skipVoid))
+        {
+            target.Append(str);
+        }
+    }
+
+    public static IEnumerable<string> GetFields(Node? body, bool skipVoid)
+    {
+        if (body is null) yield break;
         foreach (var field in body.NamedChildren.Where(c => c.Type == "field_declaration"))
         {
             var id = FindIdentifier(field);
@@ -174,13 +199,13 @@ public class Program {
             if (skipVoid && type == "void") continue;
 
             var isPointer = field.Text.Replace(declaredType.Text, "").Replace(id.Text, "").Contains('*');
-            target.Append($"\t{type.Replace("_o", "")}{(isPointer ? "*" : "")} {id.Text};\n");
+            yield return $"\t{type.Replace("struct", "").Replace("_o", "")}{(isPointer ? "*" : "")} {id.Text};\n";
         }
     }
 
-    public static Regex rex = new Regex("^(?!\\d+$).+");
+    public static Regex rex = new("^(?!\\d+$).+");
 
-    public static  string MergedStruct(string a)
+    public static string MergedStruct(string a)
     {
         var builder = new StringBuilder();
         var body = GetBody(structsByName[a + "_o"]);
@@ -199,29 +224,28 @@ public class Program {
         var extra = "";
         if (head.IndexOf(':') is var colon && colon >= 0)
             extra = $" : {head[(colon + 1)..].Trim().Replace("_Fields", "").Split('_')[^1]}";
-        var f = a.Split('_')[^1];
-        if (!rex.IsMatch(f))
+        if (!rex.IsMatch(a))
             return "";
 
-        var hasStatics = structsByName.ContainsKey(f + "_StaticFields");
+        var hasStatics = structsByName.ContainsKey(a + "_StaticFields");
         var statics = new StringBuilder();
         if (hasStatics)
         {
-            statics.Append($"struct {f}_c {{\n");
+            statics.Append($"struct {a}_c {{\n");
             statics.Append("\tchar pad[184];\n");
-            statics.Append($"\tstruct {f}_StaticFields* static_fields;\n");
+            statics.Append($"\tstruct {a}_StaticFields* static_fields;\n");
             statics.Append("};\n\n");
-            statics.Append($"struct {f}_StaticFields {{\n");
-            var body3 = GetBody(structsByName[f + "_StaticFields"]);
+            statics.Append($"struct {a}_StaticFields {{\n");
+            var body3 = GetBody(structsByName[a + "_StaticFields"]);
             if (body3 is null) return "";
 
             AppendFields(statics, body3, true);
             statics.Append("};\n\n");
         }
 
-        var b = hasStatics ? f + "_c" : "void*";
-        builder.Append($"struct {f}{extra} {{\n");
-        builder.Append($"\t{b} klass;\n");
+        var b = hasStatics ? a + "_c" : "void";
+        builder.Append($"struct {a}{extra} {{\n");
+        builder.Append($"\t{b}* klass;\n");
         builder.Append("\tvoid* monitor;\n");
         AppendFields(builder, fields, false);
 
@@ -241,14 +265,15 @@ public class Program {
         "Ps5",
         "Android"
     ];
+    
+    public static Dictionary<string, Node> structsByName2 = new();
 
     public static async Task Main(string[] args)
     {
         using var language = new Language("C++");
         using var parser = new Parser(language);
-        var il2CppHeaderData = File.ReadAllText(inputPath);
-        using var tree = parser.Parse(il2CppHeaderData)!;
-        IndexTypes(tree.RootNode);
+        using var tree = parser.Parse(await File.ReadAllTextAsync(inputPath))!;
+        IndexTypes(tree.RootNode, structsByName);
         if (!File.Exists(inputPath))
         {
             await Console.Error.WriteLineAsync($"input header not found: {inputPath}");
@@ -269,7 +294,8 @@ public class Program {
 
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         File.WriteAllText(outputPath, header.ToString());
-
+        using var tree2 = parser.Parse(await File.ReadAllTextAsync(outputPath))!;
+        IndexTypes(tree2.RootNode, structsByName2);
         // all types we want to generate .h/.sym files for
         List<string> types =
         [
