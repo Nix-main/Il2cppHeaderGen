@@ -44,11 +44,19 @@ internal static class SymbolExport
         await using var stream = File.OpenRead(scriptJson);
         var data = await JsonSerializer.DeserializeAsync<ScriptData>(stream);
         if (data is null) return;
-
+        bool all = types.Contains("*");
         var byType = types.ToDictionary(t => t, _ => new List<Method>());
         foreach (var scriptMethod in data.Methods)
         {
             var separator = scriptMethod.Name.IndexOf("$$", StringComparison.Ordinal);
+            if (all)
+            {
+                var name = scriptMethod.Name[..separator];
+                if (name.StartsWith("<>"))
+                    continue;
+                byType.TryAdd(name, new List<Method>());
+            }
+
             if (separator < 0 || !byType.TryGetValue(scriptMethod.Name[..separator], out var methods)) continue;
             if (ParsedMethod(scriptMethod, scriptMethod.Name[(separator + 2)..]) is { } parsed)
                 methods.Add(parsed);
@@ -67,9 +75,17 @@ internal static class SymbolExport
             var dir = string.Join('/', type.Split(".").SkipLast(1));
             a.TryAdd(dir, new HashSet<string>());
             a[dir].Add(type);
-            Directory.CreateDirectory(Path.Combine(outDir, dir));
-            await File.WriteAllTextAsync(Path.Combine(outDir, dir, $"{type.Split(".")[^1]}.h"), HeaderFileContent(type, methods, outDir,dir));
-            await File.WriteAllTextAsync(Path.Combine(outDir, dir, $"{type.Split(".")[^1]}.sym"), SymFileContent(type, methods));
+            try
+            {
+                Directory.CreateDirectory(Path.Combine(outDir, dir));
+                var header = HeaderFileContent(type, methods, outDir, dir);
+                await File.WriteAllTextAsync(Path.Combine(outDir, dir, $"{type.Split(".")[^1]}.h"), header);
+                // await File.WriteAllTextAsync(Path.Combine(outDir, dir, $"{type.Split(".")[^1]}.sym"), SymFileContent(type, methods));
+            }
+            catch (Exception)
+            {
+                Console.WriteLine($"Skipping {type}.");
+            }
         }
 
         foreach (var key in a.Keys)
@@ -81,7 +97,14 @@ internal static class SymbolExport
                 builder.Append($"#include \"{key}/{type.Split(".")[^1]}.h\"\n");
             }
 
-            await File.WriteAllTextAsync(Path.Combine(outDir, $"{key}.h"), builder.ToString());
+            try
+            {
+                await File.WriteAllTextAsync(Path.Combine(outDir, $"{key}.h"), builder.ToString());
+            }
+            catch (Exception)
+            {
+                Console.WriteLine($"Skipping collection header {key}.");
+            }
         }
     }
 
@@ -262,9 +285,10 @@ internal static class SymbolExport
                 builder.Append($"{(extra.Contains("struct") ? extra : "struct " + extra)};\n");
         }
         var name = type.Split(".")[^1];
-        
-        
+
+
         var b = Program.structsByName2[type.Replace(".", "_")];
+
         Node? bn = null;
         foreach (var child in b.NamedChildren)
         {

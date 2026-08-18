@@ -302,15 +302,23 @@ public class Program {
         // all types we want to generate .h/.sym files for
         List<string> types =
         [
-            "PlayerControl", 
-            "InnerNet.InnerNetObject",
-            "UnityEngine.MonoBehaviour",
-            "UnityEngine.Behaviour",
-            "UnityEngine.Component",
-            "UnityEngine.Object",
+            "*",
         ];
 
         var scriptJson = Path.Combine(dataRoot, "res", "script.json");
         if (File.Exists(scriptJson)) await SymbolExport.Run(scriptJson, Path.GetDirectoryName(outputPath)!, types);
+        Delete(Path.GetDirectoryName(outputPath)!);
+    }
+
+    private static void Delete(string path)
+    {
+        foreach (var directory in Directory.EnumerateDirectories(path))
+        {
+            Delete(directory);
+            if (!Directory.EnumerateFileSystemEntries(directory).Any())
+            {
+                Directory.Delete(directory);
+            }
+        }
     }
 }
