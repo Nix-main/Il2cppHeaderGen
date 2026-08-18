@@ -137,6 +137,42 @@ internal static class SymbolExport
         return false;
     }
 
+    private static void AddFields(IEnumerable<string> fields, HashSet<string> extras)
+    {
+        foreach (var field in fields)
+        {
+            var t = field.Trim().Split(" ")[0];
+            bool c = BuiltinTypes.Any(a => t.Contains(a.Key));
+            if (c)
+                continue;
+            if (t.EndsWith("*"))
+                t = t[..^1];
+            if (t.EndsWith("_c"))
+                continue;
+            t = t.Split("_")[^1];
+            Append(t, extras);
+            extras.Add(t);
+        }
+    }
+
+    private static void AppendFields(IEnumerable<string> enumerable, StringBuilder builder, int skip)
+    {
+        foreach (var field in enumerable.Skip(skip))
+        {
+            var t = field.Trim().Split(" ")[0];
+            bool c = BuiltinTypes.Any(a => t.Contains(a.Key));
+            bool p = false;
+            if (t.EndsWith("*"))
+            {
+                p = true;
+                t = t[..^1];
+            }
+
+            t = t.EndsWith("_c") || c || string.IsNullOrEmpty(t.Split("_")[^1]) ? t : t.Split("_")[^1];
+            builder.Append($"\t{t}{(p ? "*" : "")} {field.Trim().Split(" ")[1]}\n");
+        }
+    }
+
     private static string HeaderFileContent(string type, List<Method> methods)
     {
         var referencedTypes = methods
@@ -169,19 +205,10 @@ internal static class SymbolExport
 
         var fields = Program.GetFields(Program.GetBody(Program.structsByName2[type.Replace(".", "_")]), false);
         var enumerable = fields as string[] ?? fields.ToArray();
-        foreach (var field in enumerable)
-        {
-            var t = field.Trim().Split(" ")[0];
-            bool c = BuiltinTypes.Any(a => t.Contains(a.Key));
-            if (c)
-                continue;
-            if (t.EndsWith("*"))
-                t = t[..^1];
-            t = t.EndsWith("_c") ? t : t.Split("_")[^1];
-            Append(t, extras);
-            extras.Add(t);
-        }
-
+        AddFields(enumerable, extras);
+        var staticFields = Program.GetFields(Program.GetBody(Program.structsByName2[type.Replace(".", "_") + "_StaticFields"]), false);
+        var enumerable2 = staticFields as string[] ?? staticFields.ToArray();
+        AddFields(enumerable2, extras);
         extras.Remove(type);
         extras.Remove("void");
         foreach (var extra in extras)
@@ -189,22 +216,16 @@ internal static class SymbolExport
             if (!string.IsNullOrEmpty(extra))
                 builder.Append($"{(extra.Contains("struct") ? extra : "struct " + extra)};\n");
         }
+        var name = type.Split(".")[^1];
+        builder.Append("\n");
+        builder.Append($"struct {name}_c;\n");
+        builder.Append($"struct {name}_Fields;\n");
+        builder.Append($"struct {name}_StaticFields;\n");
 
-        builder.Append($"\nstruct {type.Split(".")[^1]} {{\n");
-        foreach (var field in enumerable)
-        {
-            var t = field.Trim().Split(" ")[0];
-            bool c = BuiltinTypes.Any(a => t.Contains(a.Key));
-            bool p = false;
-            if (t.EndsWith("*"))
-            {
-                p = true;
-                t = t[..^1];
-            }
-
-            t = t.EndsWith("_c") || c || string.IsNullOrEmpty(t.Split("_")[^1]) ? t : t.Split("_")[^1];
-            builder.Append($"\t{t}{(p ? "*" : "")} {field.Trim().Split(" ")[1]}\n");
-        }
+        builder.Append($"\nstruct {name} {{\n");
+        builder.Append($"\t{name}_c* klass;\n");
+        builder.Append("\tvoid* monitor;\n");
+        builder.Append($"\t{name}_Fields* fields;\n");
         foreach (var method in methods)
         {
             var parameters = string.Join(", ", method.Parameters.Select(p =>
@@ -222,7 +243,20 @@ internal static class SymbolExport
             builder.Append($"\t{(method.IsStatic ? "static " : "")}{v} {method.Name}({parameters});\n");
         }
 
-        return builder.Append("};\n").ToString();
+        builder.Append("};\n");
+        builder.Append($"\nstruct {name}_Fields {{\n");
+        AppendFields(enumerable, builder, 2);
+        builder.Append("};\n");
+        
+        builder.Append($"\nstruct {name}_c {{ \n");
+        builder.Append("\tprivate: char pad[184];\n");
+        builder.Append($"\t{name}_StaticFields* static_fields;\n");
+        builder.Append("};\n");
+        
+        builder.Append($"\nstruct {name}_StaticFields {{\n");
+        AppendFields(enumerable2, builder, 0);
+        builder.Append("};\n");
+        return builder.ToString();
     }
 
     private static string SymFileContent(string type, List<Method> methods)
