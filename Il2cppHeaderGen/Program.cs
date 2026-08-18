@@ -93,7 +93,7 @@ public class Program {
     public static bool TrySubstitutedType(string type, out string val, out string e)
     {
         var name = type.StartsWith("struct ") ? type["struct ".Length..] : type;
-        bool pointer = false;
+        var pointer = false;
         if (name.EndsWith("*"))
         {
             name = name[..^1];
@@ -192,7 +192,7 @@ public class Program {
         {
             var id = FindIdentifier(field);
             var declaredType = field.NamedChildren.FirstOrDefault(c =>
-                c.Type is "type_identifier" or "primitive_type" or "struct_specifier");
+                c.Type is "type_identifier" or "primitive_type" or "struct_specifier" or "template_type");
             if (id is null || declaredType is null) continue;
 
             TrySubstitutedType(declaredType.Text, out var type);
@@ -223,7 +223,7 @@ public class Program {
 
         var extra = "";
         if (head.IndexOf(':') is var colon && colon >= 0)
-            extra = $" : {head[(colon + 1)..].Trim().Replace("_Fields", "").Split('_')[^1]}";
+            extra = $" : {head[(colon + 1)..].Trim().Replace("_Fields", "")}";
         if (!rex.IsMatch(a))
             return "";
 
@@ -267,9 +267,12 @@ public class Program {
     ];
     
     public static Dictionary<string, Node> structsByName2 = new();
+    public static String secondContent;
 
     public static async Task Main(string[] args)
     {
+        if (Directory.Exists(Path.GetDirectoryName(outputPath)))
+            Directory.Delete(Path.GetDirectoryName(outputPath)!, true);
         using var language = new Language("C++");
         using var parser = new Parser(language);
         using var tree = parser.Parse(await File.ReadAllTextAsync(inputPath))!;
@@ -291,17 +294,20 @@ public class Program {
         using var reader = new StreamReader(st!);
         var content = await reader.ReadToEndAsync();
         header.Append(content);
-
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-        File.WriteAllText(outputPath, header.ToString());
-        using var tree2 = parser.Parse(await File.ReadAllTextAsync(outputPath))!;
+        secondContent = header.ToString();
+        File.WriteAllText(outputPath, secondContent);
+        using var tree2 = parser.Parse(secondContent)!;
         IndexTypes(tree2.RootNode, structsByName2);
         // all types we want to generate .h/.sym files for
         List<string> types =
         [
             "PlayerControl", 
-            "UnityEngine.Vector2", 
-            "System.String"
+            "InnerNet.InnerNetObject",
+            "UnityEngine.MonoBehaviour",
+            "UnityEngine.Behaviour",
+            "UnityEngine.Component",
+            "UnityEngine.Object",
         ];
 
         var scriptJson = Path.Combine(dataRoot, "res", "script.json");
