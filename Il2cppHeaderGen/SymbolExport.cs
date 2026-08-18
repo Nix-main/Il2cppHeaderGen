@@ -66,26 +66,16 @@ internal static class SymbolExport
         Directory.CreateDirectory(outDir);
         foreach (var (type, methods) in byType)
         {
-            if (methods.Count == 0)
-            {
-                Console.WriteLine($"No methods found for {type}");
-                continue;
-            }
-            
             var dir = string.Join('/', type.Split(".").SkipLast(1));
+            if (dir.Contains("<"))
+                continue;
             a.TryAdd(dir, new HashSet<string>());
             a[dir].Add(type);
-            try
-            {
-                Directory.CreateDirectory(Path.Combine(outDir, dir));
-                var header = HeaderFileContent(type, methods, outDir, dir);
-                await File.WriteAllTextAsync(Path.Combine(outDir, dir, $"{type.Split(".")[^1]}.h"), header);
-                // await File.WriteAllTextAsync(Path.Combine(outDir, dir, $"{type.Split(".")[^1]}.sym"), SymFileContent(type, methods));
-            }
-            catch (Exception)
-            {
-                Console.WriteLine($"Skipping {type}.");
-            }
+            Directory.CreateDirectory(Path.Combine(outDir, dir));
+            var header = HeaderFileContent(type, methods, outDir, dir);
+            if (header is null) continue;
+            await File.WriteAllTextAsync(Path.Combine(outDir, dir, $"{type.Split(".")[^1]}.h"), header);
+            // await File.WriteAllTextAsync(Path.Combine(outDir, dir, $"{type.Split(".")[^1]}.sym"), SymFileContent(type, methods));
         }
 
         foreach (var key in a.Keys)
@@ -96,15 +86,8 @@ internal static class SymbolExport
             {
                 builder.Append($"#include \"{key}/{type.Split(".")[^1]}.h\"\n");
             }
-
-            try
-            {
-                await File.WriteAllTextAsync(Path.Combine(outDir, $"{key}.h"), builder.ToString());
-            }
-            catch (Exception)
-            {
-                Console.WriteLine($"Skipping collection header {key}.");
-            }
+            
+            await File.WriteAllTextAsync(Path.Combine(outDir, $"{key}.h"), builder.ToString());
         }
     }
 
@@ -202,11 +185,14 @@ internal static class SymbolExport
                     extras.Add(t);
                 else
                 {
-                    var y = t.Split("<")[1].Split(">")[0];
-                    foreach (var n in y.Split(", "))
+                    try
                     {
-                        extras.Add(n);
-                    }
+                        var y = t.Split("<")[1].Split(">")[0];
+                        foreach (var n in y.Split(", "))
+                        {
+                            extras.Add(n);
+                        }
+                    } catch (IndexOutOfRangeException) {}
                 }
             }
             else
@@ -239,7 +225,7 @@ internal static class SymbolExport
         }
     }
 
-    private static string HeaderFileContent(string type, List<Method> methods, string outDir, string d)
+    private static string? HeaderFileContent(string type, List<Method> methods, string outDir, string d)
     {
         var referencedTypes = methods
             .SelectMany(m => m.Parameters.Select(p => p.Type).Append(m.ReturnType))
@@ -269,10 +255,13 @@ internal static class SymbolExport
             Append(c, extras);
         }
 
-        var fields = Program.GetFields(Program.GetBody(Program.structsByName2[type.Replace(".", "_")]), false);
+        var n2 = type.Replace(".", "_");
+        if (!Program.structsByName2.TryGetValue(n2, out Node? value))
+            return null;
+        var fields = Program.GetFields(Program.GetBody(value), false);
         var enumerable = fields as string[] ?? fields.ToArray();
         AddFields(enumerable, extras, outDir, d, builder);
-        var s = type.Replace(".", "_") + "_StaticFields";
+        var s = n2 + "_StaticFields";
         if (Program.structsByName2.ContainsKey(s))
         {
             AddFields(Program.GetFields(Program.GetBody(Program.structsByName2[s]), false), extras, outDir, d, builder);
@@ -300,13 +289,6 @@ internal static class SymbolExport
         }
         var baseName = bn != null ?  Program.secondContent.Substring(bn.StartIndex,bn.EndIndex - bn.StartIndex) : "";
         builder.Append("\n");
-        if (Program.structsByName2.ContainsKey(s))
-        {
-            builder.Append($"struct {name}_c;\n");
-            builder.Append($"struct {name}_StaticFields;\n");
-        }
-        builder.Append($"struct {name}_Fields;\n");
-        builder.Append($"struct {name}_Methods;\n\n");
         if (!string.IsNullOrEmpty(baseName))
         {
             var dir = string.Join("/", baseName.Split("_").SkipLast(1));
@@ -316,28 +298,22 @@ internal static class SymbolExport
             builder.Append($"#include \"{relative}/{baseName}.h\"\n");
         }
 
-        builder.Append($"\nstruct {name} {{\n");
-        builder.Append($"\t{(Program.structsByName2.ContainsKey(s) ? name + "_c" : "void")}* klass;\n");
-        builder.Append("\tvoid* monitor;\n");
-        builder.Append($"\t{name}_Fields fields;\n");
-        builder.Append($"\t{name}_Methods* methods() {{ return reinterpret_cast<{name}_Methods*>(this); }}\n");
-        builder.Append("};\n");
-        
-        builder.Append($"\nstruct {name}_Fields {(!string.IsNullOrEmpty(baseName) ? $": {baseName}_Fields " : "")}{{\n");
-        AppendFields(enumerable.Skip(2), builder);
-        builder.Append("};\n");
-
         if (Program.structsByName2.ContainsKey(s))
         {
+            builder.Append($"\nstruct {name}_StaticFields {{\n");
+            AppendFields(Program.GetFields(Program.GetBody(Program.structsByName2[s]), false), builder);
+            builder.Append("};\n");
+            
             builder.Append($"\nstruct {name}_c {{ \n");
             builder.Append("\tprivate: char pad[184];\n");
             builder.Append($"\tpublic: {name}_StaticFields* static_fields;\n");
             builder.Append("};\n");
-
-            builder.Append($"\nstruct {name}_StaticFields {{\n");
-            AppendFields(Program.GetFields(Program.GetBody(Program.structsByName2[s]), false), builder);
-            builder.Append("};\n");
         }
+        
+        
+        builder.Append($"\nstruct {name}_Fields {(!string.IsNullOrEmpty(baseName) ? $": {baseName}_Fields " : "")}{{\n");
+        AppendFields(enumerable.Skip(2), builder);
+        builder.Append("};\n");
 
         builder.Append($"\nstruct {name}_Methods {(!string.IsNullOrEmpty(baseName) ? $": {baseName}_Methods " : "")}{{\n");
         foreach (var method in methods)
@@ -356,6 +332,13 @@ internal static class SymbolExport
             v = c || n || string.IsNullOrEmpty(v.Split("_")[^1]) ? v : v.Split("_")[^1];
             builder.Append($"\t{(method.IsStatic ? "static " : "")}{v} {method.Name}({parameters});\n");
         }
+        builder.Append("};\n");
+        
+        builder.Append($"\nstruct {name} {{\n");
+        builder.Append($"\t{(Program.structsByName2.ContainsKey(s) ? name + "_c" : "void")}* klass;\n");
+        builder.Append("\tvoid* monitor;\n");
+        builder.Append($"\t{name}_Fields fields;\n");
+        builder.Append($"\t{name}_Methods* methods() {{ return reinterpret_cast<{name}_Methods*>(this); }}\n");
         builder.Append("};\n");
         
         return builder.ToString();

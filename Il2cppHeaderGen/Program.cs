@@ -258,7 +258,7 @@ public class Program {
     [
         "System_Collections_Generic_List_",
         "System_Collections_Generic_Dictionary_",
-        "MethodInfo",
+        "MethodInfo_",
         "_array",
         "XboxOne",
         "Ps4",
@@ -271,6 +271,7 @@ public class Program {
 
     public static async Task Main(string[] args)
     {
+        Console.ReadKey();
         if (Directory.Exists(Path.GetDirectoryName(outputPath)))
             Directory.Delete(Path.GetDirectoryName(outputPath)!, true);
         using var language = new Language("C++");
