@@ -245,8 +245,12 @@ public class Program {
 
         var b = hasStatics ? a + "_c" : "void";
         builder.Append($"struct {a}{extra} {{\n");
-        builder.Append($"\t{b}* klass;\n");
-        builder.Append("\tvoid* monitor;\n");
+        if (hasStatics)
+        {
+            builder.Append($"\t{b}* klass;\n");
+            builder.Append("\tvoid* monitor;\n");
+        }
+
         AppendFields(builder, fields, false);
 
         builder.Append("};\n\n");
@@ -262,6 +266,8 @@ public class Program {
         "_array",
         "XboxOne",
         "Ps4",
+        "PS4",
+        "PS5",
         "Ps5",
         "Android"
     ];
@@ -271,7 +277,6 @@ public class Program {
 
     public static async Task Main(string[] args)
     {
-        Console.ReadKey();
         if (Directory.Exists(Path.GetDirectoryName(outputPath)))
             Directory.Delete(Path.GetDirectoryName(outputPath)!, true);
         using var language = new Language("C++");

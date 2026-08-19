@@ -67,7 +67,7 @@ internal static class SymbolExport
         foreach (var (type, methods) in byType)
         {
             var dir = string.Join('/', type.Split(".").SkipLast(1));
-            if (dir.Contains("<"))
+            if (dir.Contains("<") || type.Contains("<"))
                 continue;
             a.TryAdd(dir, new HashSet<string>());
             a[dir].Add(type);
@@ -84,10 +84,12 @@ internal static class SymbolExport
             builder.Append("#pragma once\n\n");
             foreach (var type in a[key])
             {
-                builder.Append($"#include \"{key}/{type.Split(".")[^1]}.h\"\n");
+                string line = $"{key.Split("/")[^1]}/{type.Split(".")[^1]}.h";
+                if (line.StartsWith('/'))
+                    line = line[1..];
+                builder.Append($"#include \"{line}\"\n");
             }
-            
-            await File.WriteAllTextAsync(Path.Combine(outDir, $"{key}.h"), builder.ToString());
+            await File.WriteAllTextAsync(Path.Combine(outDir, $"{key};.h"), builder.ToString());
         }
     }
 
@@ -298,6 +300,8 @@ internal static class SymbolExport
             builder.Append($"#include \"{relative}/{baseName}.h\"\n");
         }
 
+        builder.Append($"\nstruct {name};\n");
+
         if (Program.structsByName2.ContainsKey(s))
         {
             builder.Append($"\nstruct {name}_StaticFields {{\n");
@@ -335,8 +339,12 @@ internal static class SymbolExport
         builder.Append("};\n");
         
         builder.Append($"\nstruct {name} {{\n");
-        builder.Append($"\t{(Program.structsByName2.ContainsKey(s) ? name + "_c" : "void")}* klass;\n");
-        builder.Append("\tvoid* monitor;\n");
+        if (Program.structsByName2.ContainsKey(s))
+        {
+            builder.Append($"\t{name}_c* klass;\n");
+            builder.Append("\tvoid* monitor;\n");
+        }
+
         builder.Append($"\t{name}_Fields fields;\n");
         builder.Append($"\t{name}_Methods* methods() {{ return reinterpret_cast<{name}_Methods*>(this); }}\n");
         builder.Append("};\n");
